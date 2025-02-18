@@ -1,0 +1,536 @@
+---
+title: "The NCAA Confrence Clash"
+author: "Lia Du, Sarah Ingemunson, Matt Michael, Madi Davis"
+date: "Decemeber 12, 2022"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE)
+```
+
+```{r imports, message = FALSE}
+library(plyr)
+library(tidyverse)
+library(infer)
+library(knitr)
+library(broom)
+library(patchwork)
+
+theme_custom <- function() {
+  theme_bw() +
+  theme(axis.title = element_text(size = 10), 
+        title = element_text(size = 14),
+        axis.text.x = element_text(size = 10),
+        axis.text.y = element_text(size = 10),
+        plot.caption = element_text(size = 10))}
+```
+
+\tableofcontents \# adds table of contents \newpage
+
+# I. INTRODUCTION
+
+# II. METHODOLOGY
+
+## 2.1 Loading, preparing, and cleaning data
+
+The first step along the way is to load in the various data frames needed for analysis. Since this repository is updated annually, each seasons statistics come in their own excel file. This data must be combined in order to view trends with time.
+
+To do this, first the year in which a season took place is added to each respective dataframe, then vertically combined into one vast dataset.
+
+```{r loading_data}
+# Years from 13 - 21
+cfb13 <- read.csv('cfb13.csv')
+cfb14 <- read.csv('cfb14.csv')
+cfb15 <- read.csv('cfb15.csv')
+cfb16 <- read.csv('cfb16.csv')
+cfb17 <- read.csv('cfb17.csv')
+cfb18 <- read.csv('cfb18.csv')
+cfb19 <- read.csv('cfb19.csv')
+cfb20 <- read.csv('cfb20.csv')
+cfb21 <- read.csv('cfb21.csv')
+
+# Adding respective year of season column
+cfb13$Season <- 2013
+cfb14$Season <- 2014
+cfb15$Season <- 2015
+cfb16$Season <- 2016
+cfb17$Season <- 2017
+cfb18$Season <- 2018
+cfb19$Season <- 2019
+cfb20$Season <- 2020
+cfb21$Season <- 2021
+```
+
+```{r merging_data}
+cfb21_fixed <- separate(cfb21, col = "Win.Loss", into = c("Win", "Loss"), sep = "-")
+cfb21_fixed$Win <- as.integer(cfb21_fixed$Win)
+cfb21_fixed$Loss <- as.integer(cfb21_fixed$Loss)
+
+# create combined dataframe
+cfb_full <- rbind.fill(cfb13, cfb14, cfb15, cfb16, cfb17, cfb18, cfb19, cfb20, cfb21_fixed)
+```
+
+```{r tidying_data}
+# Miami Issues
+cfb_full$Team[cfb_full$Team == "Miami (OH) (MAC)"] <- "Miami OH (MAC)"
+cfb_full$Team[cfb_full$Team == "Miami (FL) (ACC)"] <- "Miami FL (ACC)"
+
+# splitting Team column into Team and Conference columns (also getting rid of leftover parentheses)
+cfb_full <- separate(cfb_full, col = "Team", into = c("Team", "Conference"), sep = "\\(")
+cfb_full$Conference <- str_replace(cfb_full$Conference,"([)])", "")
+```
+
+```{r creating_win_ratio}
+attach(cfb_full)
+# creating column for win ratio (to account for some teams playing more/less games)
+cfb_full$win.ratio <- Win / Games
+```
+
+```{r creating_teams_data}
+# creating different frames to analyze using regression and other plots 
+cfb_gen <- cfb_full %>%
+  select(Team, Conference, Season, win.ratio, Off.Rank, Def.Rank, Penalty.Rank, Penalty.Yards.Per.Game, Time.of.Possession.Rank, Turnover.Rank, Avg.Turnover.Margin.per.Game)
+
+cfb_off <- cfb_full %>%
+  select(Team, Conference, Season, win.ratio, Off.Rank, Off.Yards.Play, Points.Per.Game, Off.Yards.per.Game, First.Down.Rank, X4th.Percent, Passing.Off.Rank, Yards.Completion, Redzone.Off.Rank, Redzone.Points, Rushing.Off.Rank, Yards.Rush)
+
+cfb_def <- cfb_full %>%
+  select(Team, Conference, Season, win.ratio, Def.Rank, Yards.Play.Allowed, Avg.Points.per.Game.Allowed, Yards.Per.Game.Allowed, First.Down.Def.Rank, Opp.First.Downs, Opponent.4th.Percent, Pass.Def.Rank, Yards.Completion.Allowed, Redzone.Def.Rank, Redzone.Points.Allowed, Rushing.Def.Rank, Yds.Rush.Allowed, Sack.Rank, Touchdowns.Allowed)
+
+cfb_specials <- cfb_full %>%
+  select(Team, Conference, Season, win.ratio, Kickoff.Return.Rank, Avg.Yard.per.Kickoff.Return, Punt.Return.Rank, Avg.Yards.Per.Punt.Return, Opp.Feild.Goals.Made, Feild.Goals)
+```
+
+## Linear Regression Models
+
+Our group decided to do a series of linear regressions where we predict a teams win ratio (number of wins divided by number of games played) that included stats from various overarching sections of a football team. This includes a model made using some general averages and ranks, as well as models made using only offensive team stats, only defensive team stats, and only special team stats.
+
+```{r ratio_by_general}
+# predicting win ratio using general stats
+general.fit <- lm(win.ratio ~ Off.Rank + Def.Rank + Penalty.Rank + Penalty.Yards.Per.Game + Time.of.Possession.Rank + Turnover.Rank + Avg.Turnover.Margin.per.Game, data = cfb_gen) 
+
+# glance(general.fit)
+# general.fit %>%
+#   broom::tidy()
+```
+
+To start off our series of linear regressions, we ran a general model. This included 7 statistics such as Offensive and Defensive Rank, Average Turnover Margin, and Time of Possession. This model had an adjusted $R^2$ value of $0.7683$. This shows a generally high correlation between a teams win ratio and these 7 features. Additionally, we made observations on the $p$-values of each of the features and saw that only Offensive Rank, Defensive Rank, and Average Turnover Margin per Game were below the significance level of $\alpha = 0.05$, so we only elected to keep these features in our combined model at the end.
+
+```{r ratio_by_off}
+# predicting win ratio using offensive stats
+off.fit <- lm(win.ratio ~ Off.Rank + Off.Yards.Play + Points.Per.Game + Off.Yards.per.Game + First.Down.Rank + X4th.Percent + Passing.Off.Rank + Yards.Completion + Redzone.Off.Rank + Redzone.Points + Rushing.Off.Rank + Yards.Rush, data = cfb_off) 
+
+# glance(off.fit)
+# off.fit %>%
+#   broom::tidy()
+```
+
+Next, we predicted win ratio using only Offensive stats such as Points per Game, First Down Rank, Redzone Points, and Rushing Yards, as well as 8 other statistics. This Offensive model had an adjusted $R^2$ value of $0.6596$, meaning that only Offensive stats do not have a high correlation to the win ratio of a team. We made the same observations of the $p$-value as previously at our chosen significance level and elected to keep 7 features: Offensive Yards per Play, Points per Game, Offensive Yards per Game, First Down Rank, Yards Completion, Rushing Offense Rank, and Rushing Yards.
+
+```{r rank_by_off}
+# predicting offensive rank using offensive stats
+off.rank.fit <- lm(Off.Rank ~  win.ratio + Off.Yards.Play + Points.Per.Game + Off.Yards.per.Game + First.Down.Rank + X4th.Percent + Passing.Off.Rank + Yards.Completion + Redzone.Off.Rank + Redzone.Points + Rushing.Off.Rank + Yards.Rush, data = cfb_off) 
+
+# glance(off.rank.fit)
+# off.rank.fit %>%
+#   broom::tidy()
+```
+
+```{r ratio_by_def}
+# predicting win ratio using defensive stats
+def.fit <- lm(win.ratio ~ Def.Rank + Yards.Play.Allowed + Avg.Points.per.Game.Allowed + Yards.Per.Game.Allowed + First.Down.Def.Rank + Opp.First.Downs + Opponent.4th.Percent + Pass.Def.Rank + Yards.Completion.Allowed + Redzone.Def.Rank + Redzone.Points.Allowed + Rushing.Def.Rank + Yds.Rush.Allowed + Sack.Rank + Touchdowns.Allowed, data = cfb_def) 
+
+# glance(def.fit)
+# def.fit %>%
+#   broom::tidy()
+```
+
+Our next model was made using 15 defensive stats including Defensive Rank, Yards per Game Allowed, Average Points per Game Allowed, Pass Defense Rank, and Rushing Defense Rank. This model had an adjusted $R^2$ value of $0.7033$, which is indicative of a slightly high correlation. A reason that this defensive model may have given us a higher $R^2$ value than the offensive model could be that we included more defensive stats than we did offensive stats, not necessarily that good defense is more important than good offense for a high win ratio. We also elected to drop 5 out of 15 of these features according to their $p$-values, and kept Yards per Play Allowed, Average Points per Game Allowed, Yards per Game Allowed, First Down Defense Rank, Opponent First Downs, Yards Completion Allowed, Rushing Defense Rank, Yards Rushing Allowed, Sack Rank, and Touchdowns Allowed.
+
+```{r rank_by_def}
+# predicting defensive rank using defensive stats
+def.rank.fit <- lm(Def.Rank ~ win.ratio + Yards.Play.Allowed + Avg.Points.per.Game.Allowed + Yards.Per.Game.Allowed + First.Down.Def.Rank + Opp.First.Downs + Opponent.4th.Percent + Pass.Def.Rank + Yards.Completion.Allowed + Redzone.Def.Rank + Redzone.Points.Allowed + Rushing.Def.Rank + Yds.Rush.Allowed + Sack.Rank + Touchdowns.Allowed, data = cfb_def) 
+
+# glance(def.rank.fit)
+# def.rank.fit %>%
+#   broom::tidy()
+```
+
+```{r ratio_by_special}
+# predicting win ratio using specials stats
+special.fit <- lm(win.ratio ~ Kickoff.Return.Rank + Avg.Yard.per.Kickoff.Return + Punt.Return.Rank + Avg.Yards.Per.Punt.Return + Opp.Feild.Goals.Made + Feild.Goals, data = cfb_specials) 
+
+# glance(special.fit)
+# special.fit %>%
+#   broom::tidy()
+```
+
+Our last initial regression we ran was a model predicting win ratio from 6 Special Teams statistics including Kickoff Return Rank, Punt Return Rank, and Field Goals. This model had an adjusted $R^2$ value of $0.1593$, indicating a very low correlation between win ratio and Special Teams stats. We decided to not include any of the Special Teams stats in our combined model because of this.
+
+### Initial Conclusions
+
+To sum up the results of the initial regression results, we noticed that Offensive and Defensive statistics had a much higher correlation to a teams win ratio that a teams Special Teams statistics did. Because of this, we created a combined model using our most important stats mentioned from the first general model, and from the offensive and defensive models.
+
+```{r ratio_by_combined}
+# creating very large expanded model that we will then use backwards elimination to reduce
+
+cfb_gen_combined <- cfb_gen %>%
+  full_join(cfb_off) %>%
+  full_join(cfb_def)
+
+combined.general.fit <- lm(win.ratio ~ Off.Rank + Def.Rank + Avg.Turnover.Margin.per.Game + Off.Yards.Play + Points.Per.Game + Off.Yards.per.Game + First.Down.Rank + Yards.Completion + Rushing.Off.Rank + Yards.Rush + Yards.Play.Allowed + Avg.Points.per.Game.Allowed + Yards.Per.Game.Allowed + First.Down.Def.Rank + Opp.First.Downs + Yards.Completion.Allowed + Rushing.Def.Rank + Yds.Rush.Allowed + Sack.Rank + Touchdowns.Allowed, data = cfb_gen_combined)
+
+# glance(combined.general.fit)
+# combined.general.fit %>%
+#   broom::tidy()
+```
+
+Next, our combined model of 20 features had an adjusted $R^2$ value of $0.8640$, indicating a very high correlation between these features and a teams win ratio. Additionally, 7 features have $p$-values above the $\alpha = 0.05$ significance level, so we removed them to form our reduced model.
+
+```{r ratio_by_reduced}
+# manually reduce model by observing p-values
+reduced.general.fit <- lm(win.ratio ~ Avg.Turnover.Margin.per.Game + Off.Yards.Play + Points.Per.Game + First.Down.Rank + Yards.Rush + Yards.Play.Allowed + Avg.Points.per.Game.Allowed + Opp.First.Downs + Yards.Completion.Allowed + Rushing.Def.Rank + Yds.Rush.Allowed + Sack.Rank + Touchdowns.Allowed, data = cfb_gen_combined)
+
+# glance(reduced.general.fit)
+# reduced.general.fit %>%
+#   broom::tidy()
+```
+
+```{r ratio_by_best}
+# use backwards elimination to create the parsimonious model
+parsi.general.fit <- step(object = reduced.general.fit, direction = "backward", trace = FALSE)
+
+# glance(parsi.general.fit)
+# parsi.general.fit %>%
+#   broom::tidy()
+```
+
+Additionally, we ran a backwards elimination on this manually reduced model to see if any other features had to be removed, as well, before we had our parsimonious model. The step function did not remove any more features, so our manually reduced model is our chosen best model. Finally, our manually reduced 13-feature model had an adjusted $R^2$ value of $0.8630$, still showing a very high correlation in predicting a team's win ratio.
+
+One thing worth mentioning before moving on from this regression section is that our group failed to take into account multicolinearity in our models. There is a high chance that it is present in our model given the amount of features in our final/best model. With more time, we may have been able to analyze the results/differences with this taken into account as well.
+
+## Predicting Section
+
+```{r prediction}
+# prediction using 2013 Michigan St. Team
+msu_2013_data <- cfb13 %>%
+  filter(Team == "Michigan St. (Big Ten)") %>%
+  select(Avg.Turnover.Margin.per.Game, Off.Yards.Play, Points.Per.Game, First.Down.Rank, 
+         Yards.Rush, Yards.Play.Allowed, Avg.Points.per.Game.Allowed, Opp.First.Downs, 
+         Yards.Completion.Allowed, Rushing.Def.Rank, Yds.Rush.Allowed, Sack.Rank, 
+         Touchdowns.Allowed)
+
+msu_2013_ratio_data <- cfb13 %>%
+  filter(Team == "Michigan St. (Big Ten)") %>%
+  select(Win, Games) 
+msu_2013_ratio_data$win_ratio <- msu_2013_ratio_data$Win / msu_2013_ratio_data$Games
+
+#predict(object = parsi.general.fit, newdata = msu_2013_data)
+```
+
+To test our best model, we chose to use a team many students here might be familiar with: the 2013 Michigan St. team. With our best model, including 13 different features from our college football data set, this team was predicted to have a win ratio of $0.8120$. This is an underestimate of the actual win ratio of $0.929$. However, given that college football teams do not play very many games (this team only played 14) the discrepancy is only off by a game or two. With this in mind, our final model does a fairly good job at predicting a teams win ratio.
+
+## Graphing Section:
+
+The graphs comparing various conferences and their stats.
+
+```{r}
+# Visualizing table one more time
+#cfb_gen
+```
+
+Lets make graphs for various stats against time to see where each conference is compared to the others.
+
+```{r}
+
+main_conferences <- c('ACC', 'Big 12', 'Big Ten', 'MAC', 'Pac-12', 'SEC', 'Sun Belt')
+
+cfb_gen %>% 
+  filter(Conference != '') %>% 
+  # filter(Conference %in% main_conferences) %>% 
+  
+  ggplot(mapping = aes(x = Season, y = win.ratio)) +
+  geom_point(mapping = aes(fill = Conference),
+             size = 3,
+             shape = 21,
+             color = 'Black') +
+  
+  labs(title = "Teams' Win Ratios by Conference, Throughout Time",
+       x = 'Season',
+       y = 'Wins / Games Played Ratio') +
+  
+  scale_x_discrete(limits = 2013:2021) +
+  theme_custom()
+```
+
+```{r averages_by_conference}
+
+avg_stats <- cfb_gen %>% 
+  group_by(Conference, Season) %>% 
+  summarize(avg_ratio = mean(win.ratio, na.rm = T), 
+            avg_off_rank = mean(Off.Rank, na.rm = T),
+            avg_def_rank = mean(Def.Rank, na.rm = T),
+            avg_pen_rank = mean(Penalty.Rank, na.rm = T),
+            avg_pos_rank = mean(Time.of.Possession.Rank, na.rm = T),
+            avg_turno_rank = mean(Turnover.Rank, na.rm = T))
+avg_stats %>%
+  filter(Season == 2021)
+```
+
+```{r}
+# Making more readable graphs now
+
+# Win Ratio
+fig_ratio <- avg_stats %>% 
+  filter(Conference %in% main_conferences) %>%
+  
+  ggplot(mapping = aes(x = Season, y = avg_ratio)) +
+  geom_point(mapping = aes(fill = Conference),
+             size = 3,
+             shape = 21,
+             color = 'Black') +
+  
+  labs(title = "Average Win Ratio Over Time",
+       x = 'Season',
+       y = 'Average Win Ratio') +
+  
+  scale_x_discrete(limits = 2013:2021) +
+  theme_custom()
+
+# Offensive Rank
+fig_off_rank <- avg_stats %>% 
+  filter(Conference %in% main_conferences) %>%
+  
+  ggplot(mapping = aes(x = Season, y = avg_off_rank)) +
+  geom_point(mapping = aes(fill = Conference),
+             size = 3,
+             shape = 21,
+             color = 'Black') +
+  
+  labs(title = "Average Offensive Ranking Over Time",
+       x = 'Season',
+       y = 'Average Offensive Ranking') +
+  
+  scale_x_discrete(limits = 2013:2021) +
+  theme_custom()
+
+
+# Defensive Rank
+fig_def_rank <- avg_stats %>% 
+  filter(Conference %in% main_conferences) %>%
+  
+  ggplot(mapping = aes(x = Season, y = avg_def_rank)) +
+  geom_point(mapping = aes(fill = Conference),
+             size = 3,
+             shape = 21,
+             color = 'Black') +
+  
+  labs(title = "Average Defensive Ranking Over Time",
+       x = 'Season',
+       y = 'Average Defensive Ranking') +
+  
+  scale_x_discrete(limits = 2013:2021) +
+  theme_custom()
+
+# Penalty Rank
+fig_pen_rank <- avg_stats %>% 
+  filter(Conference %in% main_conferences) %>%
+  
+  ggplot(mapping = aes(x = Season, y = avg_pen_rank)) +
+  geom_point(mapping = aes(fill = Conference),
+             size = 3,
+             shape = 21,
+             color = 'Black') +
+  
+  labs(title = "Average Penalty Ranking Over Time",
+       x = 'Season',
+       y = 'Average Penalty Ranking') +
+  
+  scale_x_discrete(limits = 2013:2021) +
+  theme_custom()
+
+# Time of possession
+fig_pos_rank <- avg_stats %>% 
+  filter(Conference %in% main_conferences) %>%
+  
+  ggplot(mapping = aes(x = Season, y = avg_pos_rank)) +
+  geom_point(mapping = aes(fill = Conference),
+             size = 3,
+             shape = 21,
+             color = 'Black') +
+  
+  labs(title = "Average Posession Ranking Over Time",
+       x = 'Season',
+       y = 'Average Posession Ranking') +
+  
+  scale_x_discrete(limits = 2013:2021) +
+  theme_custom()
+
+# Turnovers
+fig_turno_rank <- avg_stats %>% 
+  filter(Conference %in% main_conferences) %>%
+  
+  ggplot(mapping = aes(x = Season, y = avg_turno_rank)) +
+  geom_point(mapping = aes(fill = Conference),
+             size = 3,
+             shape = 21,
+             color = 'Black') +
+  
+  labs(title = "Average Turnover Ranking Over Time",
+       x = 'Season',
+       y = 'Average Turnover Ranking') +
+  
+  scale_x_discrete(limits = 2013:2021) +
+  theme_custom()
+```
+
+```{r fig.align = "center", fig.width = 14, fig.height = 10}
+fig_ratio + fig_off_rank + fig_def_rank + fig_pen_rank + fig_pos_rank + fig_turno_rank +
+  
+  plot_layout(ncol = 2, nrow = 3)
+```
+
+```{r}
+#Boxplots
+box_ratio <- cfb_gen %>% 
+  filter(Conference %in% main_conferences) %>% 
+  
+  ggplot(mapping = aes(x = Conference, y = win.ratio)) + 
+  geom_violin(mapping = aes(fill = Conference),
+              alpha = 0.1,
+              color = 'Black') +
+  geom_boxplot(mapping = aes(fill = Conference),
+               width = 0.4, 
+               color = "Black") +
+  
+  labs(title = "Win Ratio",
+       x = 'Conference',
+       y = 'Win Ratio') +
+  theme_custom() +
+  theme(legend.position = "none")
+
+
+# Offense
+box_off_rank <- cfb_gen %>% 
+  filter(Conference %in% main_conferences) %>% 
+  
+  ggplot(mapping = aes(x = Conference, y = Off.Rank)) + 
+  geom_violin(mapping = aes(fill = Conference),
+              alpha = 0.1,
+              color = 'Black') +
+  geom_boxplot(mapping = aes(fill = Conference),
+               width = 0.4, 
+               color = "Black") +
+  
+  labs(title = "Offensive Ranking",
+       x = 'Conference',
+       y = 'Offensive Ranking') +
+  theme_custom() +
+  theme(legend.position = "none")
+
+# Defense
+box_def_rank <- cfb_gen %>% 
+  filter(Conference %in% main_conferences) %>% 
+  
+  ggplot(mapping = aes(x = Conference, y = Def.Rank)) + 
+  geom_violin(mapping = aes(fill = Conference),
+              alpha = 0.1,
+              color = 'Black') +
+  geom_boxplot(mapping = aes(fill = Conference),
+               width = 0.4, 
+               color = "Black") +
+  
+  labs(title = "Defensive Ranking",
+       x = 'Conference',
+       y = 'Defensive Ranking') +
+  theme_custom() +
+  theme(legend.position = "none")
+
+# Pentalties
+box_pen_rank <- cfb_gen %>% 
+  filter(Conference %in% main_conferences) %>% 
+  
+  ggplot(mapping = aes(x = Conference, y = Penalty.Rank)) + 
+  geom_violin(mapping = aes(fill = Conference),
+              alpha = 0.1,
+              color = 'Black') +
+  geom_boxplot(mapping = aes(fill = Conference),
+               width = 0.4, 
+               color = "Black") +
+  
+  labs(title = "Penalty Ranking",
+       x = 'Conference',
+       y = 'Penalty Ranking') +
+  theme_custom() +
+  theme(legend.position = "none")
+
+# Time of possession Ranking
+box_pos_rank <- cfb_gen %>% 
+  filter(Conference %in% main_conferences) %>% 
+  
+  ggplot(mapping = aes(x = Conference, y = Time.of.Possession.Rank)) + 
+  geom_violin(mapping = aes(fill = Conference),
+              alpha = 0.1,
+              color = 'Black') +
+  geom_boxplot(mapping = aes(fill = Conference),
+               width = 0.4, 
+               color = "Black") +
+  
+  labs(title = "Time of Posession Ranking",
+       x = 'Conference',
+       y = 'Time of Posession Ranking') +
+  theme_custom() +
+  theme(legend.position = "none")
+
+# Turnovers
+box_turno_rank <- cfb_gen %>% 
+  filter(Conference %in% main_conferences) %>% 
+  
+  ggplot(mapping = aes(x = Conference, y = Turnover.Rank)) + 
+  geom_violin(mapping = aes(fill = Conference),
+              alpha = 0.1,
+              color = 'Black') +
+  geom_boxplot(mapping = aes(fill = Conference),
+               width = 0.4, 
+               color = "Black") +
+  
+  labs(title = "Turnover Ranking",
+       x = 'Conference',
+       y = 'Turnover Ranking') +
+  theme_custom() +
+  theme(legend.position = "none")
+```
+
+```{r fig.align = "center", fig.width = 14, fig.height = 10}
+box_ratio + box_off_rank + box_def_rank + box_pen_rank + box_pos_rank + box_turno_rank +
+  
+  plot_layout(ncol = 2, nrow = 3)
+```
+
+# III. CONCLUSIONS
+
+## Summary of Results
+
+In our project, we investigated the question, what makes the best collegiate football conference, using the data analysis of the collegiate football team dataset. We divided our overarching question into two subquestions: “what is the best football conference?”, and “what features influence the win ratio (calculated as wins vs. number of games played) of the best football conference?”
+
+To answer the first subquestion, we utilized various plots (for example, the average predicted rankings) in order to visualize and understand initial observations of our datasets. We noticed that there was a common trend amongst all graphs: SEC ranks the highest within most categories (and if not the highest, it remains consistently within the top rankings). As a result, our team believes that the best overall conference within the collegiate football team dataset is the SEC.
+
+To answer the second subquestion, we then completed a series of regression models in order to identify the variables that are the most influential in determining a team’s win ratio. By calculating the p-value of certain features and adjusted $R^2$ of models, we found that the most important factors are the following: average turnover margin per game, off yards per play, points per game, the first-downs ranking, the number of yards rushed, the number of yards per play allowed, average points per game allowed, the opponents’ first-downs, the number of yards per completion allowed, the rushing defense rank, the number of yards per rush allowed, the sack ranking, and the number of touchdowns allowed. Of these features, the most important features were average points per game and average points allowed per game.
+
+## Limitations and Reliability/Validity of Data
+
+Since our dataset was collected from real football games and seasons, rather than it being a simulated dataset, our dataset is reliable. However, we pre-processed this real dataset by eliminating less influential information due to the overwhelmingly large size of the original dataset. We could have accidentally removed important influential factors as a byproduct of pre-processing and further impacted the accuracy of our conclusions. 
+
+Additionally, our group failed to take multicollinearity into account in our models. There is a high probability that it is present in our model given the amount of features in our final/best model. If given more time, we may have been able to analyze our results with this taken into account.
+
+## Suggestions, Critiques, and Questions on Future Research
+
+There are a couple of issues that we were able to find and can improve upon within future research. First, we concluded that the SEC is the best collegiate conference by visualizing graphs depicting average rankings over time, as well as win ratio over time. This would be an appropriate statistical analysis since we were able to draw the same conclusion from six different points of views. However, since we came to our conclusions through visual observations, it may not be accurate. We could use a better means of statistical measures to validate our conclusion that the SEC is the best collegiate conference. 
+
+Second, although our regression analysis of our general model (which included Offensive and Defensive Rank, Average Turnover Margin, and Time of Possession) reached a low $p$-value and a high $R^2$, it was a linear regression model. It is appropriate to use a linear model to understand the data initially, however, an advanced model (for example, a non-linear model) can be created to fully interpret the data in the future.
+
+Future questions that may arise would be regarding certain individual factors and its direct influence on a collegiate conference and team. For example, “how does the success rate of passes (passes completed / passes attempted) affect the performance and rankings of a collegiate conference?” 
