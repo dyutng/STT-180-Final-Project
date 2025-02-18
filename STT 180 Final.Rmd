@@ -1,5 +1,5 @@
 ---
-title: "The NCAA Confrence Clash"
+title: "The NCAA Conference Clash"
 author: "Lia Du, Sarah Ingemunson, Matt Michael, Madi Davis"
 date: "Decemeber 12, 2022"
 output:
